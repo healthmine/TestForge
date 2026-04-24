@@ -17,7 +17,7 @@ class FeatureEmployerGroupXrefId(
 ) : Serializable
 
 @Entity
-@Table(name = "FEATURE_EMPLOYER_GROUP_XREF", schema = "COM")
+@Table(name = "FEATURE_EMPLOYER_GROUP_XREF")
 class FeatureEmployerGroupXref(
     @EmbeddedId
     val id: FeatureEmployerGroupXrefId,

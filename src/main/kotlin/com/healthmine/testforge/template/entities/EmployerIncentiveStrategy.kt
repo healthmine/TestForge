@@ -20,7 +20,7 @@ class EmployerIncentiveStrategyId(
 ) : Serializable
 
 @Entity
-@Table(name = "EMPLOYER_INCENTIVE_STRATEGY", schema = "COM")
+@Table(name = "EMPLOYER_INCENTIVE_STRATEGY")
 class EmployerIncentiveStrategy(
     @EmbeddedId
     val id: EmployerIncentiveStrategyId,

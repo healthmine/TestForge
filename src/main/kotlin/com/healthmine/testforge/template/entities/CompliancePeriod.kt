@@ -9,7 +9,7 @@ import java.time.LocalDate
 
 @Entity
 @Immutable
-@Table(name = "COMPLIANCE_PERIOD", schema = "COM")
+@Table(name = "COMPLIANCE_PERIOD")
 class CompliancePeriod(
     @Id
     @Column(name = "ID")

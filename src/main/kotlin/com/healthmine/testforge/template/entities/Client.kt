@@ -8,7 +8,7 @@ import org.hibernate.annotations.Immutable
 
 @Entity
 @Immutable
-@Table(name = "CLIENT", schema = "COM")
+@Table(name = "CLIENT")
 class Client(
     @Id
     @Column(name = "ID")

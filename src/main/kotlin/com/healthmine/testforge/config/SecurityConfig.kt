@@ -25,7 +25,10 @@ class SecurityConfig(
             .cors { it.configurationSource(urlBasedCorsConfigurationSource) }
             .csrf { it.disable() }
             .authorizeHttpRequests {
-                it.requestMatchers(*SecurityConstants.ANONYMOUS_ROUTES).permitAll()
+                // Public endpoints
+                it.requestMatchers("/actuator/health").permitAll()
+                it.requestMatchers("/jwt-test/**").permitAll()
+                // Everything else requires auth
                 it.anyRequest().authenticated()
             }
             .sessionManagement {

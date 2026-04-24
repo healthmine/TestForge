@@ -78,7 +78,7 @@ class BasicEisService(
             request.testSession, Date.valueOf(compliancePeriod.startDate))
 
         // Step 10: Optional online registration
-        if (request.shouldOnlineReg) {
+        if (request.shouldOnlineReg == true) {
             callProc("ah_test.online_web_reg(?, ?, ?, ?)",
                 memberId, request.contactEmail, request.contactNumber, request.mfaType)
         }
