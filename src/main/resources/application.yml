@@ -28,6 +28,8 @@ testforge:
   jwt:
     secret: ${JWT_SECRET}
     expiration-time: 3600000
+  test-member:
+    password: ${TEST_MEMBER_PASSWORD}
 
 management:
   endpoints:

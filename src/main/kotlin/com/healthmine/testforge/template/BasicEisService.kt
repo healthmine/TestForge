@@ -1,5 +1,6 @@
 package com.healthmine.testforge.template
 
+import com.healthmine.testforge.config.TestMemberProperties
 import com.healthmine.testforge.template.dtos.BasicEisRequest
 import com.healthmine.testforge.template.dtos.BasicEisResponse
 import com.healthmine.testforge.template.entities.EmployerIncentiveStrategy
@@ -11,6 +12,7 @@ import com.healthmine.testforge.template.repositories.CompliancePeriodRepository
 import com.healthmine.testforge.template.repositories.EmployerIncentiveStrategyRepository
 import com.healthmine.testforge.template.repositories.FeatureEmployerGroupXrefRepository
 import com.healthmine.testforge.template.repositories.IncentiveStrategyRepository
+import com.healthmine.testforge.utility.PasswordHasher
 import com.healthmine.testforge.utility.logger
 import jakarta.persistence.EntityManager
 import org.hibernate.Session
@@ -32,7 +34,8 @@ class BasicEisService(
     private val eisRepo: EmployerIncentiveStrategyRepository,
     private val featureRepo: FeatureEmployerGroupXrefRepository,
     private val entityManager: EntityManager,
-    private val jdbcTemplate: JdbcTemplate
+    private val jdbcTemplate: JdbcTemplate,
+    private val testMemberProperties: TestMemberProperties
 ) {
     private val log = logger
 
@@ -83,12 +86,35 @@ class BasicEisService(
                 memberId, request.contactEmail, request.contactNumber, request.mfaType)
         }
 
+        val username = jdbcTemplate.queryForObject(
+            "SELECT username FROM member_phi WHERE id = ?",
+            String::class.java,
+            memberId
+        ) ?: throw ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "No username for member $memberId")
+
+        // Hash the configured plaintext password with a fresh random salt and write both.
+        // member_phi.password holds the hash hex; member_password_salt.pwd_salt holds the salt hex.
+        val hashed = PasswordHasher.hash(testMemberProperties.password)
+        jdbcTemplate.update("UPDATE member_phi SET password = ? WHERE id = ?", hashed.hashHex, memberId)
+        jdbcTemplate.update(
+            """
+            MERGE INTO member_password_salt dest
+            USING (SELECT ? AS member_id, ? AS pwd_salt FROM dual) src
+            ON (dest.member_id = src.member_id)
+            WHEN MATCHED THEN UPDATE SET dest.pwd_salt = src.pwd_salt
+            WHEN NOT MATCHED THEN INSERT (member_id, pwd_salt) VALUES (src.member_id, src.pwd_salt)
+            """.trimIndent(),
+            memberId, hashed.saltHex
+        )
+
         return BasicEisResponse(
             testSession = request.testSession,
             memberId = memberId,
             employerGroupId = employerGroupId,
             medicalPlanId = medicalPlanId,
-            incentiveStrategyId = strategy.id
+            incentiveStrategyId = strategy.id,
+            username = username,
+            password = testMemberProperties.password
         )
     }
 
