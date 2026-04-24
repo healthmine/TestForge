@@ -6,26 +6,30 @@ Spring Boot QA test data backend for creating test members, health actions, and 
 
 ### Prerequisites
 
-- Java 21 (or jenv for automatic version management)
-- Oracle database connection
-- Valid JWT token (issued by Auth service)
+- Java 21 (`jenv local 21` if you use jenv)
+- Python 3 with `pyjwt` for the local token generator
+- Oracle database access
+- Access to the repo's GitHub Actions secrets (for `TEST_MEMBER_PASSWORD`)
 
 ### Build
 
 ```bash
-./gradlew build
+./gradlew bootJar
 ```
+
+Produces `build/libs/TestForge.jar`.
 
 ### Run
 
 ```bash
-export ORACLE_DB_URL=your-oracle-host
-export DB_USER=your-db-user
-export DB_PASS=your-db-password
-export DB_SCHEMA=COM
-export JWT_SECRET=your-base64-encoded-secret
+export JWT_SECRET=$(openssl rand -base64 32)        # or a value shared with Auth
+export TEST_MEMBER_PASSWORD='Orbita11!'             # mirrors the GH secret
+export ORACLE_DB_URL=oracle.qa.healthmineops.com
+export DB_USER=...
+export DB_PASS=...
+export DB_SCHEMA=DEMOMA1                            # defaults to COM if unset
 
-./gradlew bootRun
+java -jar build/libs/TestForge.jar
 ```
 
 Server starts on port 9042 at `/testforge/api`.
@@ -40,35 +44,26 @@ Server starts on port 9042 at `/testforge/api`.
 curl http://localhost:9042/testforge/api/actuator/health
 ```
 
-Response:
 ```json
-{
-  "status": "UP"
-}
+{ "status": "UP" }
 ```
-
----
 
 ### Create Basic EIS Test Setup (Protected)
 
-**Endpoint:** `POST /testforge/api/template/basic-eis`
+`POST /testforge/api/template/basic-eis`
 
-Creates a test member with:
-- Employer incentive strategy (EIS) linked to an existing incentive strategy
-- Health action feature flags enabled
-- SSO registration enabled (optionally online registration)
-- Materialized views refreshed and automatic health processing triggered
+Creates a fully provisioned test member: employer group, medical plan, EIS row, feature flags for each health action, SSO-enabled username, a hashed password, then refreshes materialized views and runs automatic-health for the session.
 
-**Headers:**
+**Headers**
 ```
-Authorization: Bearer <JWT_TOKEN>
+Authorization: Bearer <JWT>
 Content-Type: application/json
 ```
 
-**Request Body:**
+**Request body**
 ```json
 {
-  "testSession": "PE000.0001",
+  "testSession": "FORGE_TEST_001",
   "healthActionCodes": ["HA_BP_CHECK", "HA_WEIGHT"],
   "strategyCd": "DEFAULT",
   "shouldOnlineReg": false,
@@ -78,284 +73,183 @@ Content-Type: application/json
 }
 ```
 
-**Parameters:**
-- `testSession` (required): Unique session identifier for test isolation (e.g., `PE000.0001`, `TEST.001`)
-- `healthActionCodes` (required): List of health action codes to enable features for (e.g., `["HA_BP_CHECK", "HA_GLUCOSE_TEST"]`)
-- `strategyCd` (required): Incentive strategy code to link to employer group (must exist in database)
-- `shouldOnlineReg` (optional, default: false): Enable online registration for the test member
-- `contactEmail` (optional): Email for online registration (required if `shouldOnlineReg` is true)
-- `contactNumber` (optional): Phone number for online registration
-- `mfaType` (optional): MFA type for online registration
+| Field | Required | Notes |
+|---|---|---|
+| `testSession` | yes | Unique per run; used as the member's last name for isolation. |
+| `healthActionCodes` | yes | Non-empty list; one `healthaction:<code>` feature flag is upserted per entry. |
+| `strategyCd` | yes | Must match an existing row in `incentive_strategy`. |
+| `shouldOnlineReg` | no | Triggers `ah_test.online_web_reg` when true. |
+| `contactEmail` / `contactNumber` / `mfaType` | no | Forwarded to `online_web_reg` when `shouldOnlineReg` is true. |
 
-**Example cURL:**
-
-```bash
-curl -X POST http://localhost:9042/testforge/api/template/basic-eis \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "testSession": "PE000.0001",
-    "healthActionCodes": ["HA_BP_CHECK", "HA_WEIGHT"],
-    "strategyCd": "DEFAULT",
-    "shouldOnlineReg": false
-  }'
-```
-
-**Response (201 Created):**
+**Response (200 OK)**
 ```json
 {
-  "testSession": "PE000.0001",
-  "memberId": 123456,
-  "employerGroupId": 789,
-  "medicalPlanId": 456,
-  "incentiveStrategyId": 111
+  "testSession": "FORGE_TEST_001",
+  "memberId": 5047005,
+  "employerGroupId": 1550,
+  "medicalPlanId": 1916,
+  "incentiveStrategyId": 3,
+  "username": "TEST.M5047005@test.healthmineops.com",
+  "password": "Orbita11!"
 }
 ```
 
-**Example with online registration:**
-
-```bash
-curl -X POST http://localhost:9042/testforge/api/template/basic-eis \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "testSession": "PE000.0002",
-    "healthActionCodes": ["HA_BP_CHECK"],
-    "strategyCd": "DEFAULT",
-    "shouldOnlineReg": true,
-    "contactEmail": "testmember@example.com",
-    "contactNumber": "555-0100",
-    "mfaType": "EMAIL"
-  }'
-```
+The `username` is read from `member_phi.username` after `ah_test.enable_sso_for_session` populates it (format varies per schema; in DEMOMA1 it's `TEST.M<memberId>@test.healthmineops.com`). The `password` is the plaintext the service just hashed into the DB — use it directly to log in via Auth.
 
 ---
 
-## Workflow: Getting a JWT Token
+## Getting a JWT
 
-TestForge requires a valid JWT token from the Auth service. Obtain a token from Auth:
+### Local development (recommended)
+
+Use the included Python generator; it signs with the base64-decoded secret the same way jjwt does:
 
 ```bash
-# 1. Login to Auth service
+JWT_SECRET=$JWT_SECRET python3 scripts/generate_jwt.py
+```
+
+Optional overrides: `JWT_SUB`, `JWT_ROLES` (JSON array), `JWT_TTL` (seconds).
+
+### From Auth
+
+If Auth is running with the same `JWT_SECRET`, log in and use the returned `accessToken`:
+
+```bash
 curl -X POST http://localhost:9041/auth/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "username": "your-username",
-    "password": "your-password"
-  }'
+  -d '{"username": "...", "password": "..."}'
 ```
-
-Response:
-```json
-{
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "tokenType": "Bearer"
-}
-```
-
-If MFA is required, you'll get:
-```json
-{
-  "mfaRequired": true,
-  "mfaToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-Verify MFA:
-```bash
-curl -X POST http://localhost:9041/auth/api/auth/verify \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "mfaCode": "123456"
-  }'
-```
-
-2. Use the `accessToken` in subsequent TestForge requests as shown above.
 
 ---
 
-## Complete End-to-End Example
+## End-to-end example
 
 ```bash
-#!/bin/bash
+TOKEN=$(JWT_SECRET=$JWT_SECRET python3 scripts/generate_jwt.py)
 
-# Get JWT token
-AUTH_RESPONSE=$(curl -s -X POST http://localhost:9041/auth/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "testpass"
-  }')
-
-TOKEN=$(echo $AUTH_RESPONSE | jq -r '.accessToken')
-echo "Token: $TOKEN"
-
-# Create test member with basic EIS
-RESPONSE=$(curl -s -X POST http://localhost:9042/testforge/api/template/basic-eis \
+curl -s -X POST http://localhost:9042/testforge/api/template/basic-eis \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "testSession": "CI_TEST_001",
-    "healthActionCodes": ["HA_BP_CHECK", "HA_WEIGHT", "HA_GLUCOSE_TEST"],
-    "strategyCd": "DEFAULT",
-    "shouldOnlineReg": false
-  }')
-
-echo "Created test member:"
-echo $RESPONSE | jq '.'
-
-MEMBER_ID=$(echo $RESPONSE | jq -r '.memberId')
-echo "Member ID: $MEMBER_ID"
+    "healthActionCodes": ["HA_BP_CHECK", "HA_WEIGHT"],
+    "strategyCd": "DEFAULT"
+  }' | jq .
 ```
+
+Then log into Auth with the returned `username` / `password` to drive the rest of the e2e flow.
 
 ---
 
-## Error Responses
+## Error responses
 
-### 400 Bad Request
+| Status | When |
+|---|---|
+| 400 | Missing / blank required field in the request body. |
+| 401 | Missing or invalid `Authorization` header, or expired/mismatched JWT. |
+| 500 | Upstream Oracle error, missing compliance period, or unknown `strategyCd` (returned as a `ResponseStatusException` passthrough). |
+
+Body shape:
 ```json
 {
-  "timestamp": "2026-04-24T16:45:00",
-  "message": "Validation failed",
-  "errors": {
-    "testSession": "must not be blank",
-    "strategyCd": "must not be blank"
-  }
-}
-```
-
-### 401 Unauthorized
-```json
-{
-  "timestamp": "2026-04-24T16:45:00",
-  "message": "Invalid or expired token",
-  "details": ""
-}
-```
-
-### 404 Not Found
-```json
-{
-  "timestamp": "2026-04-24T16:45:00",
-  "message": "Incentive strategy not found: INVALID_STRATEGY",
-  "details": "uri=/testforge/api/template/basic-eis"
-}
-```
-
-### 500 Internal Server Error
-```json
-{
-  "timestamp": "2026-04-24T16:45:00",
-  "message": "No active compliance period found",
+  "timestamp": "2026-04-24T12:00:00",
+  "message": "...",
   "details": "uri=/testforge/api/template/basic-eis"
 }
 ```
 
 ---
 
-## What Gets Created
+## What the endpoint does
 
-When you call `POST /template/basic-eis`, the following happens:
+Inside one transaction:
 
-1. **Employer Group** — Test employer created via `ah_test.create_test_employer_group()`
-2. **Medical Plan** — Test plan created via `ah_test.create_test_medical_plan()` with type 'UNK'
-3. **Test Member** — Member with PHI created via `ah_test.create_test_case()` with:
-   - Date of birth: 1985-01-01
-   - Gender: Female
-   - Coverage dates: Current compliance period
-   - SSO enabled with member registration
-4. **Employer Incentive Strategy** — Links employer group → incentive strategy → compliance period
-5. **Feature Flags** — Health action features enabled for the employer group (one per `healthActionCode`)
-6. **Materialized Views** — Refreshed via `ah_test.refresh_ah_mviews()`
-7. **Automatic Health Processing** — Triggered via `ah_test.run_ah_for_session()` with 5-second wait for async completion
+1. `ah_test.create_test_employer_group` → new `employer_group_id`.
+2. `ah_test.create_test_medical_plan` (type `UNK`) → new `medical_plan_id`.
+3. `ah_test.create_test_case` → new member with DOB 1985-01-01, gender F, coverage starting on the current compliance period.
+4. Upsert into `employer_incentive_strategy` (`employer_group_id` × `incentive_strategy_id` × `compliance_period_id`).
+5. Upsert `feature_employer_group_xref` for every `healthaction:<code>`.
+6. `ah_test.enable_sso_for_session` → populates `member_phi.username`, activates the member, assigns `MemberPortal.User`.
+7. Optional `ah_test.online_web_reg` when `shouldOnlineReg` is true.
+8. Hash `TEST_MEMBER_PASSWORD` (PBKDF2WithHmacSHA1, 901 iterations, 32-byte output) and write `member_phi.password` + `member_password_salt.pwd_salt`.
 
-All operations are committed and test data is isolated by `testSession` parameter.
+Then, outside the transaction:
+
+9. `ah_test.refresh_ah_mviews`.
+10. `ah_test.run_ah_for_session`.
+11. 5-second sleep so asynchronous processing lands before the caller reads.
 
 ---
 
-## Database
+## Configuration
 
-TestForge requires Oracle database access. Configure via environment variables:
+All configuration is environment-driven. Nothing sensitive is committed.
 
-```bash
-ORACLE_DB_URL=oracle.example.com       # Oracle host
-DB_USER=SVC_TESTFORGE                  # Service account user
-DB_PASS=***                            # Service account password
-DB_SCHEMA=COM                          # Default schema (optional, defaults to COM)
-```
+| Variable | Purpose |
+|---|---|
+| `JWT_SECRET` | Base64-encoded HMAC-SHA256 key; must match Auth. |
+| `TEST_MEMBER_PASSWORD` | Plaintext password hashed into every created member. Stored as a GitHub secret on this repo. |
+| `ORACLE_DB_URL` | Oracle host, e.g. `oracle.qa.healthmineops.com`. |
+| `DB_USER` / `DB_PASS` | Session credentials. Must have write access to `member_phi` and `member_password_salt` in the target schema. |
+| `DB_SCHEMA` | Oracle schema for both entity tables and unqualified PL/SQL (`ah_test.*`). Applied via Hikari `connection-init-sql` → `ALTER SESSION SET CURRENT_SCHEMA`. Defaults to `COM`. |
 
-Connection string: `jdbc:oracle:thin:@{ORACLE_DB_URL}:1521:HMINE`
+Connection string: `jdbc:oracle:thin:@${ORACLE_DB_URL}:1521:HMINE`.
 
 ---
 
 ## Security
 
-- **JWT Verification**: All protected endpoints require a valid Bearer token signed with the shared JWT secret
-- **Stateless**: No session storage; tokens are verified on each request
-- **Role-based**: Token roles are extracted and populated in `SecurityContext`
-- **CORS**: Enabled for all origins (configurable in production)
+- JWT verifier-only. Tokens are issued by Auth (or the local generator); TestForge only validates signature + expiration and pulls `sub` / `roles` into the `SecurityContext`.
+- Stateless — no server-side sessions.
+- Public routes: `/actuator/health`. Everything else requires a valid Bearer token.
 
 ---
 
-## Development
-
-### Project Structure
+## Project layout
 
 ```
-TestForge/
-├── src/main/kotlin/com/healthmine/testforge/
-│   ├── config/             # Security, JWT, logging config
-│   ├── jwt/                # JWT service (verifier-only)
-│   ├── template/           # Template endpoints
-│   │   ├── api/            # Controllers
-│   │   ├── dtos/           # Request/response models
-│   │   ├── entities/       # JPA entities
-│   │   └── repositories/   # Spring Data repositories
-│   └── utility/            # Exceptions, logger
-├── src/main/resources/
-│   ├── application.yml     # Configuration
-│   └── logback.xml         # Logging setup
-└── build.gradle.kts        # Gradle build config
+src/main/kotlin/com/healthmine/testforge/
+├── TestForgeApplication.kt
+├── config/          Security, JWT filter, Jackson-friendly exception handling, request logging
+├── jwt/             JwtService (verifier-only)
+├── template/
+│   ├── api/         TemplateController
+│   ├── dtos/        BasicEisRequest / BasicEisResponse
+│   ├── entities/    JPA entities (Client, IncentiveStrategy, CompliancePeriod, EIS, FeatureXref)
+│   ├── repositories Spring Data repos
+│   └── BasicEisService.kt   Orchestration + password hashing + DB writes
+└── utility/         logger + PasswordHasher
+scripts/
+└── generate_jwt.py  Local JWT generator (base64-decodes the secret so jjwt accepts it)
 ```
 
-### Key Technologies
+### Stack
 
-- **Spring Boot 4.0.6** — Latest stable
-- **Kotlin 2.2.21** — Latest stable
-- **Spring Security 7.0.5** — JWT validation
-- **Hibernate 7.2.12** — JPA ORM
-- **jjwt 0.13.0** — JWT parsing
+- Spring Boot 4.0.6, Kotlin 2.2.21, Java 21
+- Spring Security, Hibernate 7.2.12, jjwt 0.13.0
+- Oracle JDBC (ojdbc11)
 
-### Building Locally
+### Gradle
 
 ```bash
-# Compile
-./gradlew compileKotlin
-
-# Run tests
-./gradlew test
-
-# Build JAR
-./gradlew bootJar
-
-# Clean
+./gradlew bootJar    # fat jar under build/libs/
+./gradlew test       # unit tests
 ./gradlew clean
 ```
 
 ---
 
-## Future Templates
+## Future templates
 
-Additional template endpoints planned:
-- `POST /template/incentive-event-eis` — Employer-level incentive event testing
-- `POST /template/incentive-event-cis` — Cohort-level incentive event testing
-- `POST /template/health-action-simple` — Health action recommendation scenarios
-- `POST /template/member-activity` — Device/biometric data population
-- `POST /template/comprehensive` — Full attestation, waiver, lab procedure setup
+Planned:
+- `POST /template/incentive-event-eis`
+- `POST /template/incentive-event-cis`
+- `POST /template/health-action-simple`
+- `POST /template/member-activity`
+- `POST /template/comprehensive`
 
 ---
 
 ## Support
 
-For issues, questions, or feature requests, please open an issue on GitHub: https://github.com/healthmine/TestForge/issues
+Issues, questions, or requests: https://github.com/healthmine/TestForge/issues
