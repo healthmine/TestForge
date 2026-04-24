@@ -1,0 +1,15 @@
+<configuration>
+    <contextListener class="ch.qos.logback.classic.jul.LevelChangePropagator">
+        <resetJUL>true</resetJUL>
+    </contextListener>
+
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"application":"TestForge", "environment":"${DeploymentEnvironment:-local}"}</customFields>
+        </encoder>
+    </appender>
+
+    <root level="info">
+        <appender-ref ref="console" />
+    </root>
+</configuration>

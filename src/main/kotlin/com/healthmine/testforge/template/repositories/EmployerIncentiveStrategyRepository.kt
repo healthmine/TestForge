@@ -1,0 +1,7 @@
+package com.healthmine.testforge.template.repositories
+
+import com.healthmine.testforge.template.entities.EmployerIncentiveStrategy
+import com.healthmine.testforge.template.entities.EmployerIncentiveStrategyId
+import org.springframework.data.jpa.repository.JpaRepository
+
+interface EmployerIncentiveStrategyRepository : JpaRepository<EmployerIncentiveStrategy, EmployerIncentiveStrategyId>

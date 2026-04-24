@@ -1,0 +1,7 @@
+package com.healthmine.testforge.template.repositories
+
+import com.healthmine.testforge.template.entities.FeatureEmployerGroupXref
+import com.healthmine.testforge.template.entities.FeatureEmployerGroupXrefId
+import org.springframework.data.jpa.repository.JpaRepository
+
+interface FeatureEmployerGroupXrefRepository : JpaRepository<FeatureEmployerGroupXref, FeatureEmployerGroupXrefId>

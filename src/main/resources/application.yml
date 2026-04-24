@@ -1,0 +1,35 @@
+server:
+  port: 9042
+  servlet:
+    context-path: /testforge/api
+
+spring:
+  application:
+    name: TestForge
+  datasource:
+    url: jdbc:oracle:thin:@${ORACLE_DB_URL}:1521:HMINE
+    username: ${DB_USER}
+    password: ${DB_PASS}
+    driver-class-name: oracle.jdbc.OracleDriver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.OracleDialect
+        default_schema: ${DB_SCHEMA:COM}
+        jdbc:
+          fetch_size: 1000
+        order_inserts: true
+        order_updates: true
+
+testforge:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-time: 3600000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
